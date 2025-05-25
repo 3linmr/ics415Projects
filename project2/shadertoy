@@ -1,0 +1,314 @@
+// Ray Tracing Shader for Shadertoy
+// Based on the Java ray tracer with Lambertian, Metal, and Dielectric materials
+
+#define MAX_DEPTH 10
+#define SAMPLES_PER_PIXEL 4
+#define PI 3.14159265359
+#define EPSILON 0.001
+
+// Material types
+#define MAT_LAMBERTIAN 0
+#define MAT_METAL 1
+#define MAT_DIELECTRIC 2
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct HitRecord {
+    vec3 p;
+    vec3 normal;
+    float t;
+    bool frontFace;
+    int matType;
+    vec3 albedo;
+    float param; // fuzz for metal, refraction index for dielectric
+};
+
+struct Material {
+    int type;
+    vec3 albedo;
+    float param;
+};
+
+// Random number generation
+float random(inout vec2 seed) {
+    seed = fract(seed * vec2(5.3983, 5.4427));
+    seed += dot(seed.yx, seed.xy + vec2(21.5351, 14.3137));
+    return fract(seed.x * seed.y * 95.4307);
+}
+
+vec3 randomVec3(inout vec2 seed) {
+    return vec3(random(seed), random(seed), random(seed));
+}
+
+vec3 randomInUnitSphere(inout vec2 seed) {
+    vec3 p;
+    do {
+        p = 2.0 * randomVec3(seed) - 1.0;
+    } while (dot(p, p) >= 1.0);
+    return p;
+}
+
+vec3 randomUnitVector(inout vec2 seed) {
+    float a = 2.0 * PI * random(seed);
+    float z = 2.0 * random(seed) - 1.0;
+    float r = sqrt(1.0 - z * z);
+    return vec3(r * cos(a), r * sin(a), z);
+}
+
+vec3 reflectRay(vec3 v, vec3 n) {
+    return v - 2.0 * dot(v, n) * n;
+}
+
+vec3 refractRay(vec3 uv, vec3 n, float etaiOverEtat) {
+    float cosTheta = min(dot(-uv, n), 1.0);
+    vec3 rOutPerp = etaiOverEtat * (uv + cosTheta * n);
+    vec3 rOutParallel = -sqrt(abs(1.0 - dot(rOutPerp, rOutPerp))) * n;
+    return rOutPerp + rOutParallel;
+}
+
+float reflectance(float cosine, float refIdx) {
+    float r0 = (1.0 - refIdx) / (1.0 + refIdx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
+}
+
+bool nearZero(vec3 v) {
+    float s = 1e-8;
+    return (abs(v.x) < s) && (abs(v.y) < s) && (abs(v.z) < s);
+}
+
+void setFaceNormal(inout HitRecord rec, Ray r, vec3 outwardNormal) {
+    rec.frontFace = dot(r.direction, outwardNormal) < 0.0;
+    rec.normal = rec.frontFace ? outwardNormal : -outwardNormal;
+}
+
+bool hitSphere(vec3 center, float radius, Material mat, Ray r, float tMin, float tMax, inout HitRecord rec) {
+    vec3 oc = r.origin - center;
+    float a = dot(r.direction, r.direction);
+    float halfB = dot(oc, r.direction);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = halfB * halfB - a * c;
+    
+    if (discriminant < 0.0) return false;
+    
+    float sqrtd = sqrt(discriminant);
+    float root = (-halfB - sqrtd) / a;
+    if (root < tMin || root > tMax) {
+        root = (-halfB + sqrtd) / a;
+        if (root < tMin || root > tMax) {
+            return false;
+        }
+    }
+    
+    rec.t = root;
+    rec.p = r.origin + rec.t * r.direction;
+    vec3 outwardNormal = (rec.p - center) / radius;
+    setFaceNormal(rec, r, outwardNormal);
+    rec.matType = mat.type;
+    rec.albedo = mat.albedo;
+    rec.param = mat.param;
+    
+    return true;
+}
+
+bool hitWorld(Ray r, float tMin, float tMax, inout HitRecord rec, inout vec2 seed) {
+    HitRecord tempRec;
+    bool hitAnything = false;
+    float closestSoFar = tMax;
+    
+    // Ground sphere
+    Material groundMat = Material(MAT_LAMBERTIAN, vec3(0.5), 0.0);
+    if (hitSphere(vec3(0, -1000, 0), 1000.0, groundMat, r, tMin, closestSoFar, tempRec)) {
+        hitAnything = true;
+        closestSoFar = tempRec.t;
+        rec = tempRec;
+    }
+    
+    // Three large spheres
+    Material glassMat = Material(MAT_DIELECTRIC, vec3(1.0), 1.5);
+    if (hitSphere(vec3(0, 1, 0), 1.0, glassMat, r, tMin, closestSoFar, tempRec)) {
+        hitAnything = true;
+        closestSoFar = tempRec.t;
+        rec = tempRec;
+    }
+    
+    Material diffuseMat = Material(MAT_LAMBERTIAN, vec3(0.4, 0.2, 0.1), 0.0);
+    if (hitSphere(vec3(-4, 1, 0), 1.0, diffuseMat, r, tMin, closestSoFar, tempRec)) {
+        hitAnything = true;
+        closestSoFar = tempRec.t;
+        rec = tempRec;
+    }
+    
+    Material metalMat = Material(MAT_METAL, vec3(0.7, 0.6, 0.5), 0.0);
+    if (hitSphere(vec3(4, 1, 0), 1.0, metalMat, r, tMin, closestSoFar, tempRec)) {
+        hitAnything = true;
+        closestSoFar = tempRec.t;
+        rec = tempRec;
+    }
+    
+    // Small spheres - using deterministic positions based on grid coordinates
+    for (int a = -5; a <= 5; a++) {
+        for (int b = -5; b <= 5; b++) {
+            // Create deterministic but pseudo-random values based on grid position
+            vec2 gridSeed = vec2(float(a * 17 + b * 31), float(a * 23 + b * 41)) * 0.1;
+            float offsetX = fract(sin(dot(gridSeed, vec2(12.9898, 78.233))) * 43758.5453);
+            float offsetZ = fract(sin(dot(gridSeed + 1.0, vec2(12.9898, 78.233))) * 43758.5453);
+            float matChoice = fract(sin(dot(gridSeed + 2.0, vec2(12.9898, 78.233))) * 43758.5453);
+            
+            vec3 center = vec3(float(a) + 0.9 * offsetX, 0.2, float(b) + 0.9 * offsetZ);
+            
+            // Skip spheres too close to the large center sphere
+            if (length(center - vec3(0, 1, 0)) > 0.9) {
+                Material smallMat;
+                
+                if (matChoice < 0.6) {
+                    // Diffuse - create deterministic colors
+                    vec2 colorSeed = gridSeed + 3.0;
+                    float r1 = fract(sin(dot(colorSeed, vec2(12.9898, 78.233))) * 43758.5453);
+                    float g1 = fract(sin(dot(colorSeed + 1.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float b1 = fract(sin(dot(colorSeed + 2.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float r2 = fract(sin(dot(colorSeed + 3.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float g2 = fract(sin(dot(colorSeed + 4.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float b2 = fract(sin(dot(colorSeed + 5.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    vec3 albedo = vec3(r1 * r2, g1 * g2, b1 * b2);
+                    smallMat = Material(MAT_LAMBERTIAN, albedo, 0.0);
+                } else if (matChoice < 0.85) {
+                    // Metal
+                    vec2 metalSeed = gridSeed + 6.0;
+                    float r1 = fract(sin(dot(metalSeed, vec2(12.9898, 78.233))) * 43758.5453);
+                    float g1 = fract(sin(dot(metalSeed + 1.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float b1 = fract(sin(dot(metalSeed + 2.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    float fuzzVal = 0.5 * fract(sin(dot(metalSeed + 3.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    vec3 albedo = vec3(r1, g1, b1) * 0.5;
+                    smallMat = Material(MAT_METAL, albedo, fuzzVal);
+                } else {
+                    // Glass
+                    smallMat = Material(MAT_DIELECTRIC, vec3(1.0), 1.5);
+                }
+                
+                if (hitSphere(center, 0.2, smallMat, r, tMin, closestSoFar, tempRec)) {
+                    hitAnything = true;
+                    closestSoFar = tempRec.t;
+                    rec = tempRec;
+                }
+            }
+        }
+    }
+    
+    return hitAnything;
+}
+
+bool scatter(Ray rIn, HitRecord rec, inout vec3 attenuation, inout Ray scattered, inout vec2 seed) {
+    if (rec.matType == MAT_LAMBERTIAN) {
+        vec3 scatterDir = rec.normal + randomUnitVector(seed);
+        if (nearZero(scatterDir)) {
+            scatterDir = rec.normal;
+        }
+        scattered = Ray(rec.p, scatterDir);
+        attenuation = rec.albedo;
+        return true;
+    }
+    else if (rec.matType == MAT_METAL) {
+        vec3 reflected = reflectRay(normalize(rIn.direction), rec.normal);
+        reflected = reflected + rec.param * randomInUnitSphere(seed);
+        scattered = Ray(rec.p, reflected);
+        attenuation = rec.albedo;
+        return dot(scattered.direction, rec.normal) > 0.0;
+    }
+    else if (rec.matType == MAT_DIELECTRIC) {
+        attenuation = vec3(1.0);
+        float refRatio = rec.frontFace ? (1.0 / rec.param) : rec.param;
+        vec3 unitDir = normalize(rIn.direction);
+        float cosTheta = min(dot(-unitDir, rec.normal), 1.0);
+        float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+        
+        bool cannotRefract = refRatio * sinTheta > 1.0;
+        vec3 direction;
+        
+        if (cannotRefract || reflectance(cosTheta, refRatio) > random(seed)) {
+            direction = reflectRay(unitDir, rec.normal);
+        } else {
+            direction = refractRay(unitDir, rec.normal, refRatio);
+        }
+        
+        scattered = Ray(rec.p, direction);
+        return true;
+    }
+    
+    return false;
+}
+
+vec3 rayColor(Ray r, inout vec2 seed) {
+    vec3 color = vec3(1.0);
+    
+    for (int depth = 0; depth < MAX_DEPTH; depth++) {
+        HitRecord rec;
+        if (hitWorld(r, EPSILON, 1000.0, rec, seed)) {
+            vec3 attenuation;
+            Ray scattered;
+            if (scatter(r, rec, attenuation, scattered, seed)) {
+                color *= attenuation;
+                r = scattered;
+            } else {
+                return vec3(0.0);
+            }
+        } else {
+            // Sky background
+            vec3 unitDir = normalize(r.direction);
+            float t = 0.5 * (unitDir.y + 1.0);
+            vec3 skyColor = (1.0 - t) * vec3(1.0) + t * vec3(0.5, 0.7, 1.0);
+            return color * skyColor;
+        }
+    }
+    
+    return vec3(0.0); // Exceeded recursion limit
+}
+
+Ray getRay(vec2 uv, vec3 lookFrom, vec3 lookAt, vec3 vUp, float vfov, float aspectRatio) {
+    float theta = radians(vfov);
+    float h = tan(theta / 2.0);
+    float viewportHeight = 2.0 * h;
+    float viewportWidth = aspectRatio * viewportHeight;
+    
+    vec3 w = normalize(lookFrom - lookAt);
+    vec3 u = normalize(cross(vUp, w));
+    vec3 v = cross(w, u);
+    
+    vec3 horizontal = viewportWidth * u;
+    vec3 vertical = viewportHeight * v;
+    vec3 lowerLeftCorner = lookFrom - horizontal/2.0 - vertical/2.0 - w;
+    
+    vec3 direction = lowerLeftCorner + uv.x * horizontal + uv.y * vertical - lookFrom;
+    return Ray(lookFrom, direction);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec2 seed = uv + iTime * 0.01;
+    
+    // Camera setup
+    vec3 lookFrom = vec3(13, 2, 3);
+    vec3 lookAt = vec3(0, 0, 0);
+    vec3 vUp = vec3(0, 1, 0);
+    float vfov = 20.0;
+    float aspectRatio = iResolution.x / iResolution.y;
+    
+    vec3 color = vec3(0.0);
+    
+    // Anti-aliasing
+    for (int s = 0; s < SAMPLES_PER_PIXEL; s++) {
+        vec2 offset = vec2(random(seed), random(seed)) / iResolution.xy;
+        vec2 sampleUV = uv + offset;
+        Ray r = getRay(sampleUV, lookFrom, lookAt, vUp, vfov, aspectRatio);
+        color += rayColor(r, seed);
+    }
+    
+    // Average and gamma correct
+    color /= float(SAMPLES_PER_PIXEL);
+    color = sqrt(color); // Gamma correction
+    
+    fragColor = vec4(color, 1.0);
+}
