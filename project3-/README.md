@@ -14,6 +14,14 @@ https://youtu.be/1uvc_QbIlag
 
 the third file is the bonus for minecraft in unity with fragments of block rendered 
 
+import the package to your unity project and run the sample seen 
+
+or you can try it here
+https://3lialnemer.itch.io/mincraftsample
+
+
+
+
 and here is the video 
 https://youtu.be/tMnnfKkhzN8  
 
