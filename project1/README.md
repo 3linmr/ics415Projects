@@ -29,6 +29,10 @@ while for FinalRayTracing you will get this result
 ![output](https://github.com/user-attachments/assets/a29ee9c5-4f5d-4b70-abff-2cf9a744ab6f)
 
 
+video of final result 
+https://youtu.be/N_WYrUB_JYU
+
+
 
 
 
