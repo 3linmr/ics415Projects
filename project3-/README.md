@@ -1,36 +1,21 @@
-# ICS105Projects
+this is a project of creating game engine for minecraft game 
 
-First make sure you set up needed packages and extensions 
+there is 3 files here 
 
-in the code we are using this packages 
- javax.imageio.ImageIO;
- java.awt.image.BufferedImage;
- java.io.File;
- java.io.IOException;
- java.util.Random;
+file 2 is where i implement the tutorials but suddnly i faced some problems that might cost me time to fix 
+but it will run and shows you my final result so i shared it with you 
 
 
+while file 2 is fully working game engine for minecraft 
 
-now just run the code you will see 
-scanlines counter that scan each line 
-as follow 
-<img width="719" alt="Screenshot 1446-09-13 at 11 31 42 PM" src="https://github.com/user-attachments/assets/ac3f2176-50d9-46dd-af09-3ff7f735af4f" />
-
-and done. your resulted image will be rendered wherever you saved the files 
-for RayTracingFirst
-and you will get this result 
-
-![output0](https://github.com/user-attachments/assets/743e6779-9a3e-4392-ae30-952764c1ce34)
+see this video for result
+https://youtu.be/1uvc_QbIlag
 
 
-while for FinalRayTracing you will get this result 
+the third file is the bonus for minecraft in unity with fragments of block rendered 
 
-
-![output](https://github.com/user-attachments/assets/a29ee9c5-4f5d-4b70-abff-2cf9a744ab6f)
-
-
-
-
+and here is the video 
+https://youtu.be/tMnnfKkhzN8  
 
 
 
